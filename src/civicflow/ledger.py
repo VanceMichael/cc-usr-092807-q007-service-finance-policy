@@ -29,30 +29,40 @@ class Ledger:
 
     def post(self, *, journal_key: str, account: str, currency: str, amount: str, direction: str, reference: str, actor: str) -> dict:
         require_safe(journal_key, "账簿标识"); require_safe(currency, "币种")
+        with self.database.transaction() as connection:
+            return self.post_connection(connection, journal_key=journal_key, account=account, currency=currency,
+                                        amount=amount, direction=direction, reference=reference, actor=actor)
+
+    def post_connection(self, connection, *, journal_key: str, account: str, currency: str, amount: str, direction: str, reference: str, actor: str) -> dict:
+        """在调用方已开启的事务连接内入账。"""
+        require_safe(journal_key, "账簿标识"); require_safe(currency, "币种")
         if direction not in {"debit", "credit"}:
             raise ValidationError("方向必须是 debit 或 credit")
         minor = to_minor(amount)
         if minor <= 0:
             raise ValidationError("金额必须大于零")
         entry_id = new_id("entry")
-        with self.database.transaction() as connection:
-            duplicate = connection.execute("SELECT entry_id FROM journal_entries WHERE journal_key=? AND reference=? AND direction=?", (journal_key, reference, direction)).fetchone()
-            if duplicate:
-                raise ConflictError("相同参考号和方向已经入账")
-            connection.execute("INSERT INTO journal_entries(entry_id,journal_key,account,currency,amount_minor,direction,reference,occurred_at,posted_by) VALUES(?,?,?,?,?,?,?,?,?)", (entry_id, journal_key, account, currency, minor, direction, reference, self.clock.now(), actor))
+        duplicate = connection.execute("SELECT entry_id FROM journal_entries WHERE journal_key=? AND reference=? AND direction=?", (journal_key, reference, direction)).fetchone()
+        if duplicate:
+            raise ConflictError("相同参考号和方向已经入账")
+        connection.execute("INSERT INTO journal_entries(entry_id,journal_key,account,currency,amount_minor,direction,reference,occurred_at,posted_by) VALUES(?,?,?,?,?,?,?,?,?)", (entry_id, journal_key, account, currency, minor, direction, reference, self.clock.now(), actor))
         return {"entry_id": entry_id, "amount_minor": minor, "direction": direction}
 
     def reverse(self, entry_id: str, *, reference: str, actor: str) -> dict:
         with self.database.transaction() as connection:
-            row = connection.execute("SELECT * FROM journal_entries WHERE entry_id=?", (entry_id,)).fetchone()
-            if not row:
-                raise NotFoundError("原分录不存在")
-            existing = connection.execute("SELECT entry_id FROM journal_entries WHERE reversed_entry_id=?", (entry_id,)).fetchone()
-            if existing:
-                return {"entry_id": existing["entry_id"], "replayed": True}
-            reversal = new_id("entry"); direction = "credit" if row["direction"] == "debit" else "debit"
-            connection.execute("INSERT INTO journal_entries(entry_id,journal_key,account,currency,amount_minor,direction,reference,reversed_entry_id,occurred_at,posted_by) VALUES(?,?,?,?,?,?,?,?,?,?)", (reversal, row["journal_key"], row["account"], row["currency"], row["amount_minor"], direction, reference, entry_id, self.clock.now(), actor))
-            return {"entry_id": reversal, "replayed": False}
+            return self.reverse_connection(connection, entry_id, reference=reference, actor=actor)
+
+    def reverse_connection(self, connection, entry_id: str, *, reference: str, actor: str) -> dict:
+        """在调用方已开启的事务连接内冲正。"""
+        row = connection.execute("SELECT * FROM journal_entries WHERE entry_id=?", (entry_id,)).fetchone()
+        if not row:
+            raise NotFoundError("原分录不存在")
+        existing = connection.execute("SELECT entry_id FROM journal_entries WHERE reversed_entry_id=?", (entry_id,)).fetchone()
+        if existing:
+            return {"entry_id": existing["entry_id"], "replayed": True}
+        reversal = new_id("entry"); direction = "credit" if row["direction"] == "debit" else "debit"
+        connection.execute("INSERT INTO journal_entries(entry_id,journal_key,account,currency,amount_minor,direction,reference,reversed_entry_id,occurred_at,posted_by) VALUES(?,?,?,?,?,?,?,?,?,?)", (reversal, row["journal_key"], row["account"], row["currency"], row["amount_minor"], direction, reference, entry_id, self.clock.now(), actor))
+        return {"entry_id": reversal, "replayed": False}
 
     def balance(self, journal_key: str, *, currency: str) -> int:
         with self.database.connect() as connection:

@@ -124,6 +124,252 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     last_error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_due ON scheduled_jobs(status, run_at, lease_until);
+CREATE TABLE IF NOT EXISTS fin_files (
+    file_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    borrower_org_id TEXT NOT NULL,
+    borrower_name TEXT NOT NULL,
+    industry_code TEXT NOT NULL,
+    manager_id TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    state TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fin_files_borrower ON fin_files(borrower_org_id);
+CREATE TABLE IF NOT EXISTS fin_affiliates (
+    link_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    org_name TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    in_cap_group INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    UNIQUE(file_id, org_id)
+);
+CREATE TABLE IF NOT EXISTS fin_qualifications (
+    qual_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    subject_org_id TEXT NOT NULL,
+    qual_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    credential_ref TEXT NOT NULL,
+    valid_from TEXT NOT NULL,
+    valid_to TEXT NOT NULL,
+    state TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fin_quals_subject ON fin_qualifications(file_id, subject_org_id);
+CREATE TABLE IF NOT EXISTS fin_credit_versions (
+    credit_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    product_code TEXT NOT NULL,
+    policy_code TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    limit_minor INTEGER NOT NULL,
+    group_cap_minor INTEGER NOT NULL,
+    rules_json TEXT NOT NULL,
+    due_at TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,
+    locked_at TEXT,
+    locked_by TEXT,
+    snapshot_json TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    UNIQUE(file_id, seq)
+);
+CREATE INDEX IF NOT EXISTS fin_credit_file ON fin_credit_versions(file_id, state);
+CREATE TABLE IF NOT EXISTS fin_support_awards (
+    award_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    subject_org_id TEXT NOT NULL,
+    support_kind TEXT NOT NULL,
+    product_code TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    awarded_at TEXT NOT NULL,
+    counted INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fin_awards_group ON fin_support_awards(file_id, subject_org_id, counted);
+CREATE TABLE IF NOT EXISTS fin_drawdowns (
+    draw_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    credit_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    purpose TEXT NOT NULL,
+    purpose_code TEXT NOT NULL,
+    allowed_payees_json TEXT NOT NULL,
+    state TEXT NOT NULL,
+    frozen_at TEXT,
+    frozen_by TEXT,
+    freeze_reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    UNIQUE(file_id, credit_id, seq)
+);
+CREATE INDEX IF NOT EXISTS fin_draws_credit ON fin_drawdowns(credit_id, state);
+CREATE TABLE IF NOT EXISTS fin_payments (
+    payment_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    draw_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    payee_id TEXT NOT NULL,
+    payee_name TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    purpose_note TEXT NOT NULL,
+    prepared_by TEXT NOT NULL,
+    prepared_at TEXT NOT NULL,
+    paid_at TEXT,
+    receipt_no TEXT UNIQUE,
+    entry_id TEXT,
+    reversal_entry_id TEXT,
+    UNIQUE(draw_id, seq)
+);
+CREATE INDEX IF NOT EXISTS fin_payments_draw ON fin_payments(draw_id, state);
+CREATE TABLE IF NOT EXISTS fin_receipts (
+    receipt_no TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    payment_id TEXT,
+    currency TEXT NOT NULL,
+    expected_payee_id TEXT NOT NULL,
+    actual_payee_id TEXT NOT NULL,
+    expected_minor INTEGER NOT NULL,
+    actual_minor INTEGER NOT NULL,
+    raw_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    received_at TEXT NOT NULL,
+    reviewed_by TEXT,
+    reviewed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS fin_receipts_status ON fin_receipts(file_id, status);
+CREATE TABLE IF NOT EXISTS fin_risk_shares (
+    share_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    credit_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    org_name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    ratio_basis_points INTEGER NOT NULL,
+    cap_minor INTEGER NOT NULL,
+    locked INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    UNIQUE(credit_id, org_id)
+);
+CREATE TABLE IF NOT EXISTS fin_repayments (
+    repayment_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    credit_id TEXT NOT NULL,
+    draw_id TEXT,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    paid_at TEXT NOT NULL,
+    actor TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fin_repay_credit ON fin_repayments(credit_id);
+CREATE TABLE IF NOT EXISTS fin_extensions (
+    extension_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    credit_id TEXT NOT NULL,
+    proposed_by TEXT NOT NULL,
+    reviewer TEXT,
+    state TEXT NOT NULL,
+    original_due_at TEXT NOT NULL,
+    new_due_at TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    decided_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fin_exceptions (
+    exception_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    draw_id TEXT,
+    payment_id TEXT,
+    receipt_no TEXT,
+    kind TEXT NOT NULL,
+    raised_by TEXT NOT NULL,
+    state TEXT NOT NULL,
+    reviewer TEXT,
+    detail_json TEXT NOT NULL,
+    resolution_note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS fin_exceptions_open ON fin_exceptions(file_id, state);
+CREATE TABLE IF NOT EXISTS fin_compensations (
+    comp_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    credit_id TEXT NOT NULL,
+    claim_no TEXT NOT NULL,
+    state TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    applicant_id TEXT NOT NULL,
+    owner_person_id TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    job_id TEXT,
+    reviewer TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    entry_id TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    UNIQUE(file_id, claim_no)
+);
+CREATE INDEX IF NOT EXISTS fin_comp_state ON fin_compensations(file_id, state);
+CREATE TABLE IF NOT EXISTS fin_recoveries (
+    recovery_id TEXT PRIMARY KEY,
+    comp_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    status TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    recovered_at TEXT,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fin_recoveries_comp ON fin_recoveries(comp_id);
+CREATE TABLE IF NOT EXISTS fin_materials (
+    material_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fin_material_access (
+    grant_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    material_id TEXT,
+    org_id TEXT NOT NULL,
+    duty TEXT NOT NULL,
+    fields_json TEXT NOT NULL,
+    valid_to TEXT NOT NULL,
+    granted_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(file_id, org_id, material_id)
+);
 """
 
 
